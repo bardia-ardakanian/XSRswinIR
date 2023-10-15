@@ -4,15 +4,8 @@ import torch.nn as nn
 from torchvision import models, transforms
 from model_plain_xsr_config import *
 
-# Get the directory of the current file (models)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# Go up one directory to the root
-root_dir = os.path.dirname(current_dir)
-# Define the path to the desired file relative to the root directory
-weights_path = os.path.join(root_dir, "weights", SAVE_EPOCH_FILE, "_499.pth")
 
-
-def get_score_module(pretrained_weight=weights_path):
+def get_score_module(pretrained_weight):
     """
     Builds and returns a pre-trained texture classifier (based on VGG16 architecture).
 

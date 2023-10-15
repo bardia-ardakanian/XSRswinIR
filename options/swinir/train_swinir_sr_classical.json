@@ -78,5 +78,6 @@
     , "checkpoint_test": 100           // for testing
     , "checkpoint_save": 500           // for saving model
     , "checkpoint_print": 20           // for print
+    , "score_module_path": "weights/weights_net_96_epoch_499.pth"
   }
 }
