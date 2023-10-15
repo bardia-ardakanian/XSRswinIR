@@ -33,11 +33,11 @@ class DatasetXSR(data.Dataset):
         if self.paths_L and self.paths_H:
             assert len(self.paths_L) == len(self.paths_H), 'L/H mismatch - {}, {}.'.format(len(self.paths_L), len(self.paths_H))
     
-    def find_whole_image_by_l_path(self, l_path):
-        whole_L_path = l_path.replace(self.opt['dataroot_L'], self.opt['dataroot_L'])
+    def find_whole_image_by_h_path(self, h_path):
+        whole_H_path = h_path.replace(self.opt['dataroot_H'], self.opt['dataroot_big_H'])
         pattern = r"_s\d{3}"
-        whole_L_path = re.sub(pattern, "", whole_L_path)
-        return whole_L_path
+        whole_H_path = re.sub(pattern, "", whole_H_path)
+        return whole_H_path
 
 
     def __getitem__(self, index):
@@ -47,13 +47,19 @@ class DatasetXSR(data.Dataset):
         # get H image
         # ------------------------------------
         H_path = self.paths_H[index]
+        Whole_H_path = self.find_whole_image_by_h_path(H_path)
+
         img_H = util.imread_uint(H_path, self.n_channels)
         img_H = util.uint2single(img_H)
+
+        Whole_H = util.imread_uint(Whole_H, self.n_channels)
+        Whole_H = util.uint2single(Whole_H)
 
         # ------------------------------------
         # modcrop
         # ------------------------------------
         img_H = util.modcrop(img_H, self.sf)
+        Whole_H = util.modcrop(Whole_H, self.sf)
 
         # ------------------------------------
         # get L image
@@ -65,10 +71,6 @@ class DatasetXSR(data.Dataset):
             L_path = self.paths_L[index]
             img_L = util.imread_uint(L_path, self.n_channels)
             img_L = util.uint2single(img_L)
-
-            Whole_L_path = self.find_whole_image_by_l_path(L_path)
-            whole_L = util.imread_uint(Whole_L_path, self.n_channels)
-            whole_L = util.uint2single(whole_L)
 
 
         else:
@@ -103,16 +105,17 @@ class DatasetXSR(data.Dataset):
             # --------------------------------
             mode = random.randint(0, 7)
             img_L, img_H = util.augment_img(img_L, mode=mode), util.augment_img(img_H, mode=mode)
+            Whole_H = util.augment_img(Whole_H, mode=mode)
 
         # ------------------------------------
         # L/H pairs, HWC to CHW, numpy to tensor
         # ------------------------------------
-        img_H, img_L, whole_L = util.single2tensor3(img_H), util.single2tensor3(img_L), util.single2tensor3(whole_L)
+        img_H, img_L, whole_H = util.single2tensor3(img_H), util.single2tensor3(img_L), util.single2tensor3(whole_H)
 
         if L_path is None:
             L_path = H_path
 
-        return {'L': img_L, 'H': img_H, 'L_path': L_path, 'H_path': H_path, 'whole_L': whole_L, 'whole_L_path': Whole_L_path}
+        return {'L': img_L, 'H': img_H, 'L_path': L_path, 'H_path': H_path, 'whole_H': whole_H, 'whole_H_path': Whole_H_path}
 
     def __len__(self):
         return len(self.paths_H)
