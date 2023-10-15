@@ -12,6 +12,8 @@ from models.scorevgg import get_score_module
 
 from utils.utils_model import test_mode
 from utils.utils_regularizers import regularizer_orth, regularizer_clip
+import torchvision.transforms as transforms
+import random
 
 
 class ModelPlainXSR(ModelBase):
@@ -141,6 +143,77 @@ class ModelPlainXSR(ModelBase):
         else:
             raise NotImplementedError
 
+
+    def find_similar_sub_image(self):
+        source = self.col_H
+        # configs
+        num_sub_images = 5
+        image_size = (96,96)
+        overlap_threshold_percent = 50
+        # /configs
+
+        pil_image = transforms.ToPILImage()(source)
+
+        sub_images = []
+
+        for _ in range(num_sub_images):
+            # Get random coordinates for the top-left corner of the sub-image
+            max_x = pil_image.width - image_size[0]
+            max_y = pil_image.height - image_size[1]
+            start_x = random.randint(0, max_x)
+            start_y = random.randint(0, max_y)
+
+            # Create a bounding box for the sub-image
+            box = (start_x, start_y, start_x + image_size[0], start_y + image_size[1])
+
+            # Check if the new sub-image overlaps with any existing sub-images
+            # is_overlapping = any(
+            #     any(self._is_overlap(box, existing_box) for existing_box in sub_images)
+            # )
+            is_overlapping = any(
+                any(self._is_overlap(box, existing_box, overlap_threshold_percent) for existing_box in sub_images)
+            )
+
+            # If overlapping, find a new random position
+            while is_overlapping:
+                start_x = random.randint(0, max_x)
+                start_y = random.randint(0, max_y)
+                box = (start_x, start_y, start_x + image_size[0], start_y + image_size[1])
+                is_overlapping = any(
+                    any(self._is_overlap(box, existing_box) for existing_box in sub_images)
+                )
+
+            # Crop the sub-image and add it to the list
+            sub_image = pil_image.crop(box)
+            sub_images.append(sub_image)
+
+            if self.check_similarity(sub_image, self.H):
+                sub_images.append(sub_image)
+            else:
+                # If not similar, find a new random position
+                continue
+
+        return sub_images
+
+    def _is_overlap(self, box1, box2, overlap_threshold_percent):
+        # Check if two bounding boxes overlap by at most the specified threshold
+        overlap_x = max(0, min(box1[2], box2[2]) - max(box1[0], box2[0]))
+        overlap_y = max(0, min(box1[3], box2[3]) - max(box1[1], box2[1]))
+
+        area_overlap = overlap_x * overlap_y
+        area_box1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area_box2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+
+        overlap_percent_box1 = area_overlap / area_box1 * 100
+        overlap_percent_box2 = area_overlap / area_box2 * 100
+
+        return (
+            overlap_percent_box1 > overlap_threshold_percent
+            or overlap_percent_box2 > overlap_threshold_percent
+        )
+    def check_similarity(self, x, y):
+        return self.score_module(torch.cat((x, y), dim=0))
+
     # TODO: find the best by linear combination
     def find_best_replacement(self, X, y):
         return X @ torch.inverse(X.T @ X) @ X.T @ y
@@ -181,7 +254,9 @@ class ModelPlainXSR(ModelBase):
     
     # TODO: 
     def loss_for_whole_hr_from_lr(self):
-        ...
+        X = self.find_similar_sub_image()
+        replacement = self.find_best_replacement(X, self.H)
+        return self.G_lossfn(self.E, self.H) + (self.coefficient * self.G_lossfn(self.E, replacement))
 
     # ----------------------------------------
     # update parameters and get loss
