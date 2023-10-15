@@ -1,15 +1,23 @@
+import os
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from model_plain_xsr_config import *
 
+# Get the directory of the current file (models)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Go up one directory to the root
+root_dir = os.path.dirname(current_dir)
+# Define the path to the desired file relative to the root directory
+weights_path = os.path.join(root_dir, "weights", SAVE_EPOCH_FILE, "_499.pth")
 
-def get_score_module(pretrained_weights=f'{SAVE_EPOCH_FILE}_499.pth'):
+
+def get_score_module(pretrained_weight=weights_path):
     """
     Builds and returns a pre-trained texture classifier (based on VGG16 architecture).
 
     Parameters:
-        pretrained_weights (str): Path to the pre-trained model weights.
+        pretrained_weight (str): Path to the pre-trained model weights.
 
     Returns:
         model (torch.nn.Module): Pre-trained and evaluated texture classifier model.
@@ -26,7 +34,7 @@ def get_score_module(pretrained_weights=f'{SAVE_EPOCH_FILE}_499.pth'):
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     # Load checkpoint which contains model & optimizer states, epoch info, and iteration info
-    model, optimizer, _, _ = load_checkpoint(model, optimizer, f'weights\{pretrained_weights}')
+    model, optimizer, _, _ = load_checkpoint(model, optimizer, f'{pretrained_weight}')
 
     # Set the model to evaluation mode (deactivates dropout layers, etc.)
     model.eval()
