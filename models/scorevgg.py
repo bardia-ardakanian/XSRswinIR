@@ -1,8 +1,10 @@
-import os
 import torch
 import torch.nn as nn
+from torch.backends import cudnn
 from torchvision import models, transforms
 from model_plain_xsr_config import *
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_score_module(pretrained_weight):
@@ -25,6 +27,11 @@ def get_score_module(pretrained_weight):
     # Define the loss function (Mean Squared Error) and the optimizer (Adam)
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+    if torch:
+        model = torch.nn.DataParallel(model)
+        cudnn.benchmark = True
+        model = model.cuda()
 
     # Load checkpoint which contains model & optimizer states, epoch info, and iteration info
     model, optimizer, _, _ = load_checkpoint(model, optimizer, f'{pretrained_weight}')
@@ -74,7 +81,6 @@ def build_tc(num_channels=NUM_CHANNELS, sub_image_size=L, kernel=KERNEL, stride=
     )
 
     # Check for GPU availability and move the model to the appropriate device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
     return model
