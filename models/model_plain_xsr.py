@@ -1,4 +1,6 @@
 from collections import OrderedDict
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import lr_scheduler
@@ -171,7 +173,7 @@ class ModelPlainXSR(ModelBase):
             #     any(self._is_overlap(box, existing_box) for existing_box in sub_images)
             # )
             is_overlapping = any(
-                any(self._is_overlap(box, existing_box, overlap_threshold_percent) for existing_box in sub_images)
+                any(self.check_overlap(box, existing_box, overlap_threshold_percent) for existing_box in sub_images)
             )
 
             # If overlapping, find a new random position
@@ -180,7 +182,7 @@ class ModelPlainXSR(ModelBase):
                 start_y = random.randint(0, max_y)
                 box = (start_x, start_y, start_x + image_size[0], start_y + image_size[1])
                 is_overlapping = any(
-                    any(self._is_overlap(box, existing_box) for existing_box in sub_images)
+                    any(self.check_overlap(box, existing_box) for existing_box in sub_images)
                 )
 
             # Crop the sub-image and add it to the list
@@ -195,7 +197,7 @@ class ModelPlainXSR(ModelBase):
 
         return sub_images
 
-    def _is_overlap(self, box1, box2, overlap_threshold_percent):
+    def check_overlap(self, box1, box2, overlap_threshold_percent):
         # Check if two bounding boxes overlap by at most the specified threshold
         overlap_x = max(0, min(box1[2], box2[2]) - max(box1[0], box2[0]))
         overlap_y = max(0, min(box1[3], box2[3]) - max(box1[1], box2[1]))
@@ -255,7 +257,9 @@ class ModelPlainXSR(ModelBase):
     # TODO: 
     def loss_for_whole_hr_from_lr(self):
         X = self.find_similar_sub_image()
-        replacement = self.find_best_replacement(X, self.H)
+        tensor_X = torch.from_numpy(np.array(X))
+        tensor_X = tensor_X.unsqueeze(0)
+        replacement = self.find_best_replacement(tensor_X, self.H)
         return self.G_lossfn(self.E, self.H) + (self.coefficient * self.G_lossfn(self.E, replacement))
 
     # ----------------------------------------
