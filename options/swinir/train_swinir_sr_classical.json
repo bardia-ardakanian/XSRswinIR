@@ -4,7 +4,7 @@
   , "gpu_ids": [0]
   , "dist": false
 
-  , "scale": 4       // 2 | 3 | 4 | 8
+  , "scale": 2       // 2 | 3 | 4 | 8
   , "n_channels": 3  // broadcast to "datasets", 1 for grayscale, 3 for color
 
   , "path": {
@@ -20,12 +20,13 @@
       , "dataset_type": "sr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
       , "dataroot_H": "trainsets/trainH"// path of H training dataset. DIV2K (800 training images)
       , "dataroot_L": "trainsets/trainL"              // path of L training dataset
+      , "dataroot_big_H": "TODO"
 
-      , "H_size": 192                   // 96/144|192/384 | 128/192/256/512. LR patch size is set to 48 or 64 when compared with RCAN or RRDB.
+      , "H_size": 96                   // 96/144|192/384 | 128/192/256/512. LR patch size is set to 48 or 64 when compared with RCAN or RRDB.
 
       , "dataloader_shuffle": true
       , "dataloader_num_workers": 1
-      , "dataloader_batch_size": 4      // batch size 1 | 16 | 32 | 48 | 64 | 128. Total batch size =4x8=32 in SwinIR
+      , "dataloader_batch_size": 6      // batch size 1 | 16 | 32 | 48 | 64 | 128. Total batch size =4x8=32 in SwinIR
     }
     , "test": {
       "name": "test_dataset"            // just name
@@ -38,7 +39,7 @@
 
   , "netG": {
     "net_type": "swinir" 
-    , "upscale": 4                      // 2 | 3  | 4 | 8
+    , "upscale": 2                      // 2 | 3  | 4 | 8
     , "in_chans": 3 
     , "img_size": 48                    // For fair comparison, LR patch size is set to 48 or 64 when compared with RCAN or RRDB.
     , "window_size": 8  
@@ -60,13 +61,13 @@
     , "E_decay": 0.999                  // Exponential Moving Average for netG: set 0 to disable; default setting 0.999
 
     , "G_optimizer_type": "adam"        // fixed, adam is enough
-    , "G_optimizer_lr": 2e-4            // learning rate
+    , "G_optimizer_lr": 5e-5            // learning rate
     , "G_optimizer_wd": 0               // weight decay, default 0
     , "G_optimizer_clipgrad": null      // unused
     , "G_optimizer_reuse": true         // 
 
     , "G_scheduler_type": "MultiStepLR" // "MultiStepLR" is enough
-    , "G_scheduler_milestones": [250000, 400000, 450000, 475000, 500000]
+    , "G_scheduler_milestones": [450000, 475000, 500000]
     , "G_scheduler_gamma": 0.5
 
     , "G_regularizer_orthstep": null    // unused
@@ -75,8 +76,8 @@
     , "G_param_strict": true
     , "E_param_strict": true
 
-    , "checkpoint_test": 100           // for testing
-    , "checkpoint_save": 500           // for saving model
+    , "checkpoint_test": 1000           // for testing
+    , "checkpoint_save": 1000           // for saving model
     , "checkpoint_print": 20           // for print
     , "score_module_path": "weights/weights_net_96_epoch_499.pth"
   }
