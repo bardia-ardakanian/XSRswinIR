@@ -37,13 +37,13 @@ class ModelPlainXSR(ModelBase):
         if self.opt_train['E_decay'] > 0:
             self.netE = define_G(opt).to(self.device).eval()
 
-        self.crop_size = opt['xsr_crop_size']
-        self.step = opt['xsr_step']
-        self.thresh_size = opt['xsr_thresh_size']
+        self.crop_size = opt['scale'] * opt['netG']['img_size']
+        self.step = self.crop_size // 2
+        self.thresh_size = 0
 
-        self.iou_threshold = opt['xsr_iou_threshold']
-        self.sim_count = opt['xsr_sim_count']
-        self.max_sim_attempt = opt['xsr_max_sim_attempt']
+        self.iou_threshold = 0.5
+        self.sim_count = 5
+        self.max_sim_attempt = 10
 
     """
     # ----------------------------------------
@@ -119,7 +119,7 @@ class ModelPlainXSR(ModelBase):
             self.G_lossfn = CharbonnierLoss(self.opt_train['G_charbonnier_eps']).to(self.device)
         else:
             raise NotImplementedError('Loss type [{:s}] is not found.'.format(G_lossfn_type))
-        self.G_lossfn_weight = self.opt_train['G_lossfn_weight']
+        self.coefficient = self.opt_train['coefficient']
 
     # ----------------------------------------
     # define optimizer
@@ -157,63 +157,67 @@ class ModelPlainXSR(ModelBase):
         else:
             raise NotImplementedError
 
-    def get_sim_sub_images(self):
-        sim_sub_images = []
-        for path, whole_image in zip(self.L_path, self.whole_H):
+    def find_best_from_sub_images(self):
+        bests = []
+        for i, (path, whole_image) in enumerate(zip(self.L_path, self.whole_H)):
             h_space, w_space = self.get_all_sub_images_starting_point(whole_image.shape)
 
-            sim_sub_images_to_L = self.get_similar_sub_images_to_L(path, whole_image, h_space, w_space)
+            sim_sub_images_to_L = self.get_similar_sub_images_to_L(path, whole_image, h_space, w_space, self.H[i:i+1, ...])
 
             # Flatten and concatenate
-            flattened_images = np.column_stack([img.flatten() for img in sim_sub_images_to_L])
+            flattened_images = np.column_stack(sim_sub_images_to_L)
 
-            sim_sub_images.append(flattened_images)
+            bests.append(self.find_best_replacement(flattened_images, self.H[i:i+1, ...].reshape(-1, 1)).reshape(3, 96, 96))
 
-        return sim_sub_images
+        return torch.stack(bests, dim=0)
 
-    def get_similar_sub_images_to_L(self, path, whole_image, h_space, w_space):
+    def get_similar_sub_images_to_L(self, path, whole_image, h_space, w_space, H):
         idx, x_start, y_start = self.get_sub_image_starting_point(path, h_space, w_space)
 
-        # Exclude the starting point of L
-        h_space = np.delete(h_space, idx)
-        w_space = np.delete(w_space, idx)
+        # # Exclude the starting point of L
+        # h_space = np.delete(h_space, idx)
+        # w_space = np.delete(w_space, idx)
 
         similar_images = []
-        for x, y in zip(h_space, w_space):
-            sub_image = whole_image[x:x + self.crop_size, y:y + self.crop_size]
+        similar_indices = []
+        for x in h_space:
+            for y in w_space:
+                sub_image = whole_image[:, x:x + self.crop_size, y:y + self.crop_size]
 
-            if self.check_similarity(sub_image, self.H) == 1:
-                if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_images):
-                    similar_images.append(sub_image)
+                if self.check_similarity(sub_image, H) == 1:
+                    # if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_images):
+                    similar_images.append(sub_image.flatten())
+                    similar_indices.append((x, y))
 
-                if len(similar_images) == self.sim_count:
-                    return similar_images
+                    if len(similar_images) == self.sim_count:
+                        return similar_images
 
         # If not enough similar images found, generate random sub-images
         attempt_count = 0
         while len(similar_images) < self.sim_count and attempt_count < self.max_sim_attempt:
             # Randomly select a starting point inside the image boundaries
-            x = np.random.randint(0, whole_image.shape[0] - self.crop_size)
-            y = np.random.randint(0, whole_image.shape[1] - self.crop_size)
+            x = np.random.randint(0, whole_image.shape[1] - self.crop_size)
+            y = np.random.randint(0, whole_image.shape[2] - self.crop_size)
 
-            sub_image = whole_image[x:x + self.crop_size, y:y + self.crop_size]
+            sub_image = whole_image[:, x:x + self.crop_size, y:y + self.crop_size]
 
-            if self.check_similarity(sub_image, self.H) == 1:
+            if self.check_similarity(sub_image, H) == 1:
                 if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in
-                           similar_images):
-                    similar_images.append(sub_image)
+                           similar_indices):
+                    similar_images.append(sub_image.flatten())
+                    similar_indices.append((x, y))
 
             attempt_count += 1
 
         # If after all attempts still not enough similar images found, select random sub-images from h_space and w_space
         while len(similar_images) < self.sim_count:
-            rand_idx = np.random.choice(len(h_space))
-            x, y = h_space[rand_idx], w_space[rand_idx]
+            x, y = h_space[np.random.choice(len(h_space))], w_space[np.random.choice(len(h_space))]
 
-            sub_image = whole_image[x:x + self.crop_size, y:y + self.crop_size]
+            sub_image = whole_image[:, x:x + self.crop_size, y:y + self.crop_size]
 
-            if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_images):
-                similar_images.append(sub_image)
+            if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_indices):
+                similar_images.append(sub_image.flatten())
+                similar_indices.append((x, y))
 
         return similar_images
 
@@ -225,12 +229,9 @@ class ModelPlainXSR(ModelBase):
         # Extract the number from the L_path
         idx = int(re.search(r'_s(\d+)', sub_image_path).group(1))
 
-        index = 0
-        for x in h_space:
-            for y in w_space:
-                index += 1
-                if index == idx:
-                    return idx, x, y
+        x = h_space[(idx - 1) // len(w_space)]
+        y = w_space[(idx - 1)   % len(w_space)]
+        return idx, x, y
 
     def get_all_sub_images_starting_point(self, whole_H_shape):
         h, w = whole_H_shape[-2], whole_H_shape[-1]  # assuming the shape is (channels, height, width)
@@ -270,11 +271,14 @@ class ModelPlainXSR(ModelBase):
         return iou
 
     def check_similarity(self, x, y):
-        return self.score_module(torch.cat((x, y), dim=0))
+        return int(self.score_module(torch.cat((x, y), dim=0)).item() >= 0.5)
 
     # TODO: find the best by linear combination
     def find_best_replacement(self, X, y):
-        return X @ torch.inverse(X.T @ X) @ X.T @ y
+        XTX = X.T @ X
+        inv_XTX = torch.inverse(XTX)
+        XTy = X.T @ y
+        return X @ (inv_XTX @ XTy)
 
     """
     # ----------------------------------------
@@ -306,17 +310,11 @@ class ModelPlainXSR(ModelBase):
     # feed L to netG
     # ----------------------------------------
     def netG_forward(self):
-        self.netG.eval()
-        with torch.no_grad():
-            self.whole_hr_from_lr = self.netG(self.whole_H)
         self.E = self.netG(self.L)
 
-    def loss_for_whole_hr_from_lr(self):
-        X = self.get_sim_sub_images()
-        tensor_X = torch.from_numpy(np.array(X))
-        tensor_X = tensor_X.unsqueeze(0)
-        replacement = self.find_best_replacement(tensor_X, self.H)
-        return self.G_lossfn(self.E, self.H) + (self.coefficient * self.G_lossfn(self.E, replacement))
+    def find_estimated(self):
+        bests = self.find_best_from_sub_images().to(self.device)
+        return self.coefficient * self.G_lossfn(self.E, bests)
 
     # ----------------------------------------
     # update parameters and get loss
@@ -324,7 +322,7 @@ class ModelPlainXSR(ModelBase):
     def optimize_parameters(self, current_step):
         self.G_optimizer.zero_grad()
         self.netG_forward()
-        G_loss = self.G_lossfn_weight * self.G_lossfn(self.E, self.H)
+        G_loss = self.G_lossfn(self.E, self.H) + self.find_estimated()
         G_loss.backward()
 
         # ------------------------------------
