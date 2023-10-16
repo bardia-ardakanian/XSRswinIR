@@ -82,7 +82,8 @@
     , "xsr_crop_size": 96
     , "xsr_step": 48
     , "xsr_thresh_size": 0
-    , "xsr_iou_threshold": 50,
-    ,, "xsr_sim_count": 5
+    , "xsr_iou_threshold": 50
+    , "xsr_sim_count": 5
+    , "xsr_max_sim_attempt": 250
   }
 }

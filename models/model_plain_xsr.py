@@ -43,6 +43,7 @@ class ModelPlainXSR(ModelBase):
 
         self.iou_threshold = opt['xsr_iou_threshold']
         self.sim_count = opt['xsr_sim_count']
+        self.max_sim_attempt = opt['xsr_max_sim_attempt']
 
     """
     # ----------------------------------------
@@ -183,13 +184,14 @@ class ModelPlainXSR(ModelBase):
 
             if self.check_similarity(sub_image, self.H) == 1:
                 if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_images):
-                    similar_images.append((x, y))
+                    similar_images.append(sub_image)
 
                 if len(similar_images) == self.sim_count:
                     return similar_images
 
         # If not enough similar images found, generate random sub-images
-        while len(similar_images) < self.sim_count:
+        attempt_count = 0
+        while len(similar_images) < self.sim_count and attempt_count < self.max_sim_attempt:
             # Randomly select a starting point inside the image boundaries
             x = np.random.randint(0, whole_image.shape[0] - self.crop_size)
             y = np.random.randint(0, whole_image.shape[1] - self.crop_size)
@@ -199,7 +201,19 @@ class ModelPlainXSR(ModelBase):
             if self.check_similarity(sub_image, self.H) == 1:
                 if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in
                            similar_images):
-                    similar_images.append((x, y))
+                    similar_images.append(sub_image)
+
+            attempt_count += 1
+
+        # If after all attempts still not enough similar images found, select random sub-images from h_space and w_space
+        while len(similar_images) < self.sim_count:
+            rand_idx = np.random.choice(len(h_space))
+            x, y = h_space[rand_idx], w_space[rand_idx]
+
+            sub_image = whole_image[x:x + self.crop_size, y:y + self.crop_size]
+
+            if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_images):
+                similar_images.append(sub_image)
 
         return similar_images
 
