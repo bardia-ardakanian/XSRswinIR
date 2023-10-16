@@ -31,14 +31,14 @@ class DatasetXSR(data.Dataset):
 
         assert self.paths_H, 'Error: H path is empty.'
         if self.paths_L and self.paths_H:
-            assert len(self.paths_L) == len(self.paths_H), 'L/H mismatch - {}, {}.'.format(len(self.paths_L), len(self.paths_H))
-    
+            assert len(self.paths_L) == len(self.paths_H), 'L/H mismatch - {}, {}.'.format(len(self.paths_L),
+                                                                                           len(self.paths_H))
+
     def find_whole_image_by_h_path(self, h_path):
         whole_H_path = h_path.replace(self.opt['dataroot_H'], self.opt['dataroot_big_H'])
         pattern = r"_s\d{3}"
         whole_H_path = re.sub(pattern, "", whole_H_path)
         return whole_H_path
-
 
     def __getitem__(self, index):
 
@@ -52,11 +52,11 @@ class DatasetXSR(data.Dataset):
         img_H = util.imread_uint(H_path, self.n_channels)
         img_H = util.uint2single(img_H)
 
-        Whole_H = util.imread_uint(Whole_H, self.n_channels)
+        Whole_H = util.imread_uint(Whole_H_path, self.n_channels)
         Whole_H = util.uint2single(Whole_H)
 
         # ------------------------------------
-        # modcrop
+        # mod crop
         # ------------------------------------
         img_H = util.modcrop(img_H, self.sf)
         Whole_H = util.modcrop(Whole_H, self.sf)
@@ -84,7 +84,6 @@ class DatasetXSR(data.Dataset):
         # if train, get L/H patch pair
         # ------------------------------------
         if self.opt['phase'] == 'train':
-
             H, W, C = img_L.shape
 
             # --------------------------------
@@ -110,12 +109,13 @@ class DatasetXSR(data.Dataset):
         # ------------------------------------
         # L/H pairs, HWC to CHW, numpy to tensor
         # ------------------------------------
-        img_H, img_L, whole_H = util.single2tensor3(img_H), util.single2tensor3(img_L), util.single2tensor3(whole_H)
+        img_H, img_L, whole_H = util.single2tensor3(img_H), util.single2tensor3(img_L), util.single2tensor3(Whole_H)
 
         if L_path is None:
             L_path = H_path
 
-        return {'L': img_L, 'H': img_H, 'L_path': L_path, 'H_path': H_path, 'whole_H': whole_H, 'whole_H_path': Whole_H_path}
+        return {'L': img_L, 'H': img_H, 'L_path': L_path, 'H_path': H_path, 'whole_H': whole_H,
+                'whole_H_path': Whole_H_path}
 
     def __len__(self):
         return len(self.paths_H)

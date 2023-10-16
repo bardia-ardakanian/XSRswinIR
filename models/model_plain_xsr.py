@@ -1,5 +1,6 @@
 from collections import OrderedDict
 
+import re
 import numpy as np
 import torch
 import torch.nn as nn
@@ -20,13 +21,14 @@ import random
 
 class ModelPlainXSR(ModelBase):
     """Train with pixel loss"""
+
     def __init__(self, opt):
         super(ModelPlainXSR, self).__init__(opt)
         # ------------------------------------
         # define network
         # ------------------------------------
-        self.opt_train = self.opt['train']    # training option
-        
+        self.opt_train = self.opt['train']  # training option
+
         # TODO: add aux module (score module)
         self.score_module = get_score_module(self.opt_train['score_module_path'])
 
@@ -34,6 +36,13 @@ class ModelPlainXSR(ModelBase):
         self.netG = self.model_to_device(self.netG)
         if self.opt_train['E_decay'] > 0:
             self.netE = define_G(opt).to(self.device).eval()
+
+        self.crop_size = opt['xsr_crop_size']
+        self.step = opt['xsr_step']
+        self.thresh_size = opt['xsr_thresh_size']
+
+        self.iou_threshold = opt['xsr_iou_threshold']
+        self.sim_count = opt['xsr_sim_count']
 
     """
     # ----------------------------------------
@@ -46,13 +55,13 @@ class ModelPlainXSR(ModelBase):
     # initialize training
     # ----------------------------------------
     def init_train(self):
-        self.load()                           # load model
-        self.netG.train()                     # set training mode,for BN
-        self.define_loss()                    # define loss
-        self.define_optimizer()               # define optimizer
-        self.load_optimizers()                # load optimizer
-        self.define_scheduler()               # define scheduler
-        self.log_dict = OrderedDict()         # log
+        self.load()  # load model
+        self.netG.train()  # set training mode,for BN
+        self.define_loss()  # define loss
+        self.define_optimizer()  # define optimizer
+        self.load_optimizers()  # load optimizer
+        self.define_scheduler()  # define scheduler
+        self.log_dict = OrderedDict()  # log
 
     # ----------------------------------------
     # load pre-trained G model
@@ -66,7 +75,8 @@ class ModelPlainXSR(ModelBase):
         if self.opt_train['E_decay'] > 0:
             if load_path_E is not None:
                 print('Loading model for E [{:s}] ...'.format(load_path_E))
-                self.load_network(load_path_E, self.netE, strict=self.opt_train['E_param_strict'], param_key='params_ema')
+                self.load_network(load_path_E, self.netE, strict=self.opt_train['E_param_strict'],
+                                  param_key='params_ema')
             else:
                 print('Copying model for E ...')
                 self.update_E(0)
@@ -138,88 +148,120 @@ class ModelPlainXSR(ModelBase):
                                                             ))
         elif self.opt_train['G_scheduler_type'] == 'CosineAnnealingWarmRestarts':
             self.schedulers.append(lr_scheduler.CosineAnnealingWarmRestarts(self.G_optimizer,
-                                                            self.opt_train['G_scheduler_periods'],
-                                                            self.opt_train['G_scheduler_restart_weights'],
-                                                            self.opt_train['G_scheduler_eta_min']
-                                                            ))
+                                                                            self.opt_train['G_scheduler_periods'],
+                                                                            self.opt_train[
+                                                                                'G_scheduler_restart_weights'],
+                                                                            self.opt_train['G_scheduler_eta_min']
+                                                                            ))
         else:
             raise NotImplementedError
 
+    def get_sim_sub_images(self):
+        sim_sub_images = []
+        for path, whole_image in zip(self.L_path, self.whole_H):
+            h_space, w_space = self.get_all_sub_images_starting_point(whole_image.shape)
 
-    def find_similar_sub_image(self):
-        source = self.col_H
-        # configs
-        num_sub_images = 5
-        image_size = (96,96)
-        overlap_threshold_percent = 50
-        # /configs
+            sim_sub_images_to_L = self.get_similar_sub_images_to_L(path, whole_image, h_space, w_space)
 
-        pil_image = transforms.ToPILImage()(source)
+            # Flatten and concatenate
+            flattened_images = np.column_stack([img.flatten() for img in sim_sub_images_to_L])
 
-        sub_images = []
+            sim_sub_images.append(flattened_images)
 
-        for _ in range(num_sub_images):
-            # Get random coordinates for the top-left corner of the sub-image
-            max_x = pil_image.width - image_size[0]
-            max_y = pil_image.height - image_size[1]
-            start_x = random.randint(0, max_x)
-            start_y = random.randint(0, max_y)
+        return sim_sub_images
 
-            # Create a bounding box for the sub-image
-            box = (start_x, start_y, start_x + image_size[0], start_y + image_size[1])
+    def get_similar_sub_images_to_L(self, path, whole_image, h_space, w_space):
+        idx, x_start, y_start = self.get_sub_image_starting_point(path, h_space, w_space)
 
-            # Check if the new sub-image overlaps with any existing sub-images
-            # is_overlapping = any(
-            #     any(self._is_overlap(box, existing_box) for existing_box in sub_images)
-            # )
-            is_overlapping = any(
-                any(self.check_overlap(box, existing_box, overlap_threshold_percent) for existing_box in sub_images)
-            )
+        # Exclude the starting point of L
+        h_space = np.delete(h_space, idx)
+        w_space = np.delete(w_space, idx)
 
-            # If overlapping, find a new random position
-            while is_overlapping:
-                start_x = random.randint(0, max_x)
-                start_y = random.randint(0, max_y)
-                box = (start_x, start_y, start_x + image_size[0], start_y + image_size[1])
-                is_overlapping = any(
-                    any(self.check_overlap(box, existing_box) for existing_box in sub_images)
-                )
+        similar_images = []
+        for x, y in zip(h_space, w_space):
+            sub_image = whole_image[x:x + self.crop_size, y:y + self.crop_size]
 
-            # Crop the sub-image and add it to the list
-            sub_image = pil_image.crop(box)
-            sub_images.append(sub_image)
+            if self.check_similarity(sub_image, self.H) == 1:
+                if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in similar_images):
+                    similar_images.append((x, y))
 
-            if self.check_similarity(sub_image, self.H):
-                sub_images.append(sub_image)
-            else:
-                # If not similar, find a new random position
-                continue
+                if len(similar_images) == self.sim_count:
+                    return similar_images
 
-        return sub_images
+        # If not enough similar images found, generate random sub-images
+        while len(similar_images) < self.sim_count:
+            # Randomly select a starting point inside the image boundaries
+            x = np.random.randint(0, whole_image.shape[0] - self.crop_size)
+            y = np.random.randint(0, whole_image.shape[1] - self.crop_size)
 
-    def check_overlap(self, box1, box2, overlap_threshold_percent):
-        # Check if two bounding boxes overlap by at most the specified threshold
-        overlap_x = max(0, min(box1[2], box2[2]) - max(box1[0], box2[0]))
-        overlap_y = max(0, min(box1[3], box2[3]) - max(box1[1], box2[1]))
+            sub_image = whole_image[x:x + self.crop_size, y:y + self.crop_size]
 
-        area_overlap = overlap_x * overlap_y
-        area_box1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        area_box2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+            if self.check_similarity(sub_image, self.H) == 1:
+                if not any(self.calculate_iou((x, y), (sim_x, sim_y)) > self.iou_threshold for sim_x, sim_y in
+                           similar_images):
+                    similar_images.append((x, y))
 
-        overlap_percent_box1 = area_overlap / area_box1 * 100
-        overlap_percent_box2 = area_overlap / area_box2 * 100
+        return similar_images
 
-        return (
-            overlap_percent_box1 > overlap_threshold_percent
-            or overlap_percent_box2 > overlap_threshold_percent
-        )
+    def get_sub_image_starting_point(self, sub_image_path, h_space, w_space):
+        """
+        Given the path of the sub-image, determine its starting point in the whole_H image.
+        """
+
+        # Extract the number from the L_path
+        idx = int(re.search(r'_s(\d+)', sub_image_path).group(1))
+
+        index = 0
+        for x in h_space:
+            for y in w_space:
+                index += 1
+                if index == idx:
+                    return idx, x, y
+
+    def get_all_sub_images_starting_point(self, whole_H_shape):
+        h, w = whole_H_shape[-2], whole_H_shape[-1]  # assuming the shape is (channels, height, width)
+
+        # Construct h_space and w_space like in the provided code
+        h_space = np.arange(0, h - self.crop_size + 1, self.step)
+        if h - (h_space[-1] + self.crop_size) > self.thresh_size:
+            h_space = np.append(h_space, h - self.crop_size)
+
+        w_space = np.arange(0, w - self.crop_size + 1, self.step)
+        if w - (w_space[-1] + self.crop_size) > self.thresh_size:
+            w_space = np.append(w_space, w - self.crop_size)
+
+        return h_space, w_space
+
+    def calculate_iou(self, boxA, boxB):
+        """
+        boxA and boxB format: (x, y), where x, y are the starting coordinates
+        """
+        # determine the coordinates of the intersection rectangle
+        xA = max(boxA[0], boxB[0])
+        yA = max(boxA[1], boxB[1])
+        xB = min(boxA[0] + self.crop_size, boxB[0] + self.crop_size)
+        yB = min(boxA[1] + self.crop_size, boxB[1] + self.crop_size)
+
+        # compute the area of intersection rectangle
+        interArea = max(0, xB - xA) * max(0, yB - yA)
+
+        # compute the area of both boxes
+        boxAArea = self.crop_size * self.crop_size
+        boxBArea = self.crop_size * self.crop_size
+
+        # compute the intersection over union by taking the intersection
+        # area and dividing it by the sum of both areas minus the intersection area
+        iou = interArea / float(boxAArea + boxBArea - interArea)
+
+        return iou
+
     def check_similarity(self, x, y):
         return self.score_module(torch.cat((x, y), dim=0))
 
     # TODO: find the best by linear combination
     def find_best_replacement(self, X, y):
         return X @ torch.inverse(X.T @ X) @ X.T @ y
-    
+
     """
     # ----------------------------------------
     # Optimization during training with data
@@ -232,9 +274,10 @@ class ModelPlainXSR(ModelBase):
     # ----------------------------------------
     def feed_data(self, data, need_H=True):
         self.L = data['L'].to(self.device)
-        
+        self.L_path = data['L_path']  # 48
+
         # add Whole LR
-        self.whole_L = data['whole_L'].to(self.device)
+        self.whole_H = data['whole_H'].to(self.device)
 
         if need_H:
             self.H = data['H'].to(self.device)
@@ -244,19 +287,19 @@ class ModelPlainXSR(ModelBase):
     # ----------------------------------------
     def netE_forward(self):
         self.E = self.netE(self.L)
-    
+
     # ----------------------------------------
     # feed L to netG
     # ----------------------------------------
     def netG_forward(self):
         self.netG.eval()
         with torch.no_grad():
-            self.whole_hr_from_lr = self.netG(self.whole_L)
+            self.whole_hr_from_lr = self.netG(self.whole_H)
         self.E = self.netG(self.L)
-    
-    # TODO: 
+
+    # TODO:
     def loss_for_whole_hr_from_lr(self):
-        X = self.find_similar_sub_image()
+        X = self.get_sim_sub_images()
         tensor_X = torch.from_numpy(np.array(X))
         tensor_X = tensor_X.unsqueeze(0)
         replacement = self.find_best_replacement(tensor_X, self.H)
@@ -277,18 +320,23 @@ class ModelPlainXSR(ModelBase):
         # `clip_grad_norm` helps prevent the exploding gradient problem.
         G_optimizer_clipgrad = self.opt_train['G_optimizer_clipgrad'] if self.opt_train['G_optimizer_clipgrad'] else 0
         if G_optimizer_clipgrad > 0:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.opt_train['G_optimizer_clipgrad'], norm_type=2)
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.opt_train['G_optimizer_clipgrad'],
+                                           norm_type=2)
 
         self.G_optimizer.step()
 
         # ------------------------------------
         # regularizer
         # ------------------------------------
-        G_regularizer_orthstep = self.opt_train['G_regularizer_orthstep'] if self.opt_train['G_regularizer_orthstep'] else 0
-        if G_regularizer_orthstep > 0 and current_step % G_regularizer_orthstep == 0 and current_step % self.opt['train']['checkpoint_save'] != 0:
+        G_regularizer_orthstep = self.opt_train['G_regularizer_orthstep'] if self.opt_train[
+            'G_regularizer_orthstep'] else 0
+        if G_regularizer_orthstep > 0 and current_step % G_regularizer_orthstep == 0 and current_step % \
+                self.opt['train']['checkpoint_save'] != 0:
             self.netG.apply(regularizer_orth)
-        G_regularizer_clipstep = self.opt_train['G_regularizer_clipstep'] if self.opt_train['G_regularizer_clipstep'] else 0
-        if G_regularizer_clipstep > 0 and current_step % G_regularizer_clipstep == 0 and current_step % self.opt['train']['checkpoint_save'] != 0:
+        G_regularizer_clipstep = self.opt_train['G_regularizer_clipstep'] if self.opt_train[
+            'G_regularizer_clipstep'] else 0
+        if G_regularizer_clipstep > 0 and current_step % G_regularizer_clipstep == 0 and current_step % \
+                self.opt['train']['checkpoint_save'] != 0:
             self.netG.apply(regularizer_clip)
 
         # self.log_dict['G_loss'] = G_loss.item()/self.E.size()[0]  # if `reduction='sum'`

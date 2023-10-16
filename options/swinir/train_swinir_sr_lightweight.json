@@ -79,5 +79,10 @@
     , "checkpoint_test": 100           // for testing
     , "checkpoint_save": 500           // for saving model
     , "checkpoint_print": 20           // for print
+    , "xsr_crop_size": 96
+    , "xsr_step": 48
+    , "xsr_thresh_size": 0
+    , "xsr_iou_threshold": 50,
+    ,, "xsr_sim_count": 5
   }
 }
