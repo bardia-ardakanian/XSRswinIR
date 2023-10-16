@@ -297,7 +297,6 @@ class ModelPlainXSR(ModelBase):
             self.whole_hr_from_lr = self.netG(self.whole_H)
         self.E = self.netG(self.L)
 
-    # TODO:
     def loss_for_whole_hr_from_lr(self):
         X = self.get_sim_sub_images()
         tensor_X = torch.from_numpy(np.array(X))
