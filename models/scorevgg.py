@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.backends import cudnn
 from torchvision import models, transforms
-from model_plain_xsr_config import *
+from models.model_plain_xsr_config import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
