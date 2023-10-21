@@ -1,4 +1,4 @@
-# SwinIR
+# XSwinIR
 SwinIR: Image Restoration Using Swin Transformer
 
 - **data** : contains python file for each type of dataset for example `dataset_sr` is for super-resolution dataset
